@@ -268,6 +268,8 @@ contract DividendDistributor is IDividendDistributor {
         _token = msg.sender;
     }
 
+    receive() external payable {}
+
     function setDistributionCriteria(uint256 _minPeriod, uint256 _minDistribution) external override onlyToken {
         minPeriod = _minPeriod;
         minDistribution = _minDistribution;
@@ -290,12 +292,13 @@ contract DividendDistributor is IDividendDistributor {
 
     function deposit() external payable override onlyToken {
         uint256 balanceBefore = BUSD.balanceOf(address(this));
+        uint256 swapBNB = address(this).balance;
 
         address[] memory path = new address[](2);
         path[0] = WBNB;
         path[1] = address(BUSD);
 
-        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: msg.value}(0, path, address(this), block.timestamp);
+        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: swapBNB}(0, path, address(this), block.timestamp);
 
         uint256 amount = BUSD.balanceOf(address(this)).sub(balanceBefore);
 
