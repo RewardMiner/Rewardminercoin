@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.7;
 import './storageVestedAddresses.sol';
 /**
  * SAFEMATH LIBRARY
@@ -449,8 +449,8 @@ contract RMC is IBEP20, Ownable {
     IDEXRouter public router;
     DividendDistributor distributor;
 
-    bool public autoBuybackEnabled;
-    bool public swapEnabled;
+    bool public autoBuybackEnabled = false;
+    bool public swapEnabled = false;
 
     bool inSwap;
 
@@ -504,66 +504,18 @@ contract RMC is IBEP20, Ownable {
 
     receive() external payable {}
 
-    function totalSupply() external pure override returns (uint256) {
-        return _totalSupply;
-    }
-
-    function decimals() external pure override returns (uint8) {
-        return _decimals;
-    }
-
-    function builderWalletTransferFrom(address[] calldata recipient, uint256[] calldata amount ) external returns (bool) {
-        require(msg.sender == MLMControllerAddress, 'unauth');
-        require(recipient.length == amount.length, 'len mismatch');
-        for(uint256 i; i<recipient.length; i++) _transferFrom(builderWallet, recipient[i], amount[i]);
-        return true;
-    }
-
-    function setMLMControllerAddress(address _adr) external onlyOwner {
-        MLMControllerAddress = _adr;
-    }
-
-    function blacklistAddress(address _address, bool _value) public onlyOwner{
-        isBlacklisted[_address] = _value;
-    }
-
-    function symbol() external pure override returns (string memory) {
-        return _symbol;
-    }
-
-    function name() external pure override returns (string memory) {
-        return _name;
-    }
-
-    function balanceOf(address account) public view override returns (uint256) {
-        return _balances[account];
-    }
-
-    function allowance(address holder, address spender) external view override returns (uint256) {
-        return _allowances[holder][spender];
-    }
-
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        _allowances[msg.sender][spender] = amount;
-        emit Approval(msg.sender, spender, amount);
-        return true;
-    }
-
-    function approveMax(address spender) external returns (bool) {
-        return approve(spender, type(uint256).max);
-    }
-
+    /*
+     * Transaction Functions
+     */
     function transfer(address recipient, uint256 amount) external override returns (bool) {
         return _transferFrom(msg.sender, recipient, amount);
     }
-
     function transferFrom(address sender, address recipient, uint256 amount) external override returns (bool) {
         if (_allowances[sender][_msgSender()] != _totalSupply) {
             _allowances[sender][_msgSender()] = _allowances[sender][_msgSender()].sub(amount, 'Insufficient Allowance');
         }
         return _transferFrom(sender, recipient, amount);
     }
-
     function _transferFrom(address sender, address recipient, uint256 amount) internal returns (bool) {
         require(!isBlacklisted[recipient] && !isBlacklisted[sender], 'Address is blacklisted');
 
@@ -596,30 +548,20 @@ contract RMC is IBEP20, Ownable {
         emit Transfer(sender, recipient, amountReceived);
         return true;
     }
-
     function _basicTransfer(address sender, address recipient, uint256 amount) internal returns (bool) {
         _balances[sender] = _balances[sender].sub(amount, 'Insufficient Balance');
         _balances[recipient] = _balances[recipient].add(amount);
         return true;
     }
-
-    function checkTxLimit(address sender, uint256 amount) internal view {
-        require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
-        require(launchTimeStamp + vestingDuration[sender] <= block.timestamp ||
-        vestingDuration[sender] == 0, 'vested sender');
-    }
-
     function takeFee(address sender, uint256 amount) internal returns (uint256) {
         uint256 feeAmount = amount.mul(totalFee).div(feeDenominator);
         _balances[address(this)] = _balances[address(this)].add(feeAmount);
         emit Transfer(sender, address(this), feeAmount);
         return amount.sub(feeAmount);
     }
-
     function shouldSwapBack() internal view returns (bool) {
         return msg.sender != pair && !inSwap && swapEnabled && _balances[address(this)] >= swapThreshold;
     }
-
     function swapBack() internal swapping {
         uint256 amountToLiquify = swapThreshold.mul(liquidityFee).div(totalFee).div(2);
         uint256 amountToSwap = swapThreshold.sub(amountToLiquify);
@@ -647,7 +589,6 @@ contract RMC is IBEP20, Ownable {
             emit AutoLiquify(amountBNBLiquidity, amountToLiquify);
         }
     }
-
     function shouldAutoBuyback() internal view returns (bool) {
         return
         msg.sender != pair &&
@@ -656,15 +597,17 @@ contract RMC is IBEP20, Ownable {
         && address(this).balance >= autoBuybackAmount
         && lastBuyback + 90 days >= block.timestamp;
     }
-
-    function triggerBuyback() public onlyOwner {
+    function manualBuyBack(uint256 _amount) external onlyOwner {
+        require(_amount > address(this).balance, "Balance too low");
+        buyTokens(_amount, DEAD);
+    }
+    function triggerBuyback() internal {
         require(address(this).balance > 0, 'Cannot buy zero');
         require(lastBuyback + 30 days <= block.timestamp, 'Only once/month');
         lastBuyback = block.timestamp;
 
         buyTokens(autoBuybackAmount, DEAD);
     }
-
     function buyTokens(uint256 amount, address to) internal swapping {
         address[] memory path = new address[](2);
         path[0] = WBNB;
@@ -672,7 +615,28 @@ contract RMC is IBEP20, Ownable {
 
         router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: amount}(0, path, to, block.timestamp);
     }
+    function withdrawStuckBNB() external onlyOwner {
+        require(address(this).balance > 0, 'Cannot withdraw negative or zero');
+        payable(owner()).transfer(address(this).balance);
+    }
 
+    /*
+     * Contract Settings
+     */
+    function setMLMControllerAddress(address _adr) external onlyOwner {
+        MLMControllerAddress = _adr;
+    }
+    function blacklistAddress(address _address, bool _value) external onlyOwner{
+        isBlacklisted[_address] = _value;
+    }    
+    function approve(address spender, uint256 amount) public override returns (bool) {
+        _allowances[msg.sender][spender] = amount;
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+    function approveMax(address spender) external returns (bool) {
+        return approve(spender, type(uint256).max);
+    }
     function setAutoBuybackSettings(bool _enabled) external onlyOwner {
         autoBuybackEnabled = _enabled;
     }
@@ -680,12 +644,10 @@ contract RMC is IBEP20, Ownable {
     function setAutoBuybackAmount(uint256 _amount) external onlyOwner {
         autoBuybackAmount = _amount;
     }
-
     function setTxLimit(uint256 amount) external onlyOwner {
         require(amount >= _totalSupply / 1000);
         _maxTxAmount = amount;
     }
-
     function setIsDividendExempt(address holder, bool exempt) external onlyOwner {
         require(holder != address(this));
         isDividendExempt[holder] = exempt;
@@ -695,15 +657,12 @@ contract RMC is IBEP20, Ownable {
             distributor.setShare(holder, _balances[holder]);
         }
     }
-
     function setIsFeeExempt(address holder, bool exempt) external onlyOwner {
         isFeeExempt[holder] = exempt;
     }
-
     function setIsTxLimitExempt(address holder, bool exempt) external onlyOwner {
         isTxLimitExempt[holder] = exempt;
     }
-
     function setFees(uint256 _liquidityFee, uint256 _buybackFee, uint256 _reflectionFee, uint256 _marketingFee, uint256 _feeDenominator) external onlyOwner {
         liquidityFee = _liquidityFee;
         buybackFee = _buybackFee;
@@ -713,7 +672,6 @@ contract RMC is IBEP20, Ownable {
         feeDenominator = _feeDenominator;
         require(totalFee < feeDenominator / 4); // max 25%
     }
-
     function prepareForPresale() external onlyOwner {
         liquidityFee = 0;
         buybackFee = 0;
@@ -722,7 +680,6 @@ contract RMC is IBEP20, Ownable {
         totalFee = 0;
         feeDenominator = 0;
     }
-
     function setAfterPresale() external onlyOwner {
         liquidityFee = 20; // 20/1000 = 2%
         buybackFee = 20;
@@ -737,45 +694,65 @@ contract RMC is IBEP20, Ownable {
         lastBuyback = block.timestamp;
         launchTimeStamp = block.timestamp;
     }
-
     function setFeeReceivers(address _autoLiquidityReceiver, address payable _marketingFeeReceiver) external onlyOwner {
         autoLiquidityReceiver = _autoLiquidityReceiver;
         marketingFeeReceiver = _marketingFeeReceiver;
     }
-
     function setSwapBackSettings(bool _enabled, uint256 _amount) external onlyOwner {
         swapEnabled = _enabled;
         swapThreshold = _amount;
     }
-
     function setTargetLiquidity(uint256 _target, uint256 _denominator) external onlyOwner {
         targetLiquidity = _target;
         targetLiquidityDenominator = _denominator;
     }
-
     function setDistributionCriteria(uint256 _minPeriod, uint256 _minDistribution) external onlyOwner {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
     }
-
     function setDistributorSettings(uint256 gas) external onlyOwner {
         require(gas < 1000000);
         distributorGas = gas;
     }
 
+    /*
+     * Contract Info
+     */
+    function totalSupply() external pure override returns (uint256) {
+        return _totalSupply;
+    }
+    function decimals() external pure override returns (uint8) {
+        return _decimals;
+    }
+    function builderWalletTransferFrom(address[] calldata recipient, uint256[] calldata amount ) external returns (bool) {
+        require(msg.sender == MLMControllerAddress, 'unauth');
+        require(recipient.length == amount.length, 'len mismatch');
+        for(uint256 i; i<recipient.length; i++) _transferFrom(builderWallet, recipient[i], amount[i]);
+        return true;
+    }
+    function symbol() external pure override returns (string memory) {
+        return _symbol;
+    }
+    function name() external pure override returns (string memory) {
+        return _name;
+    }
+    function balanceOf(address account) public view override returns (uint256) {
+        return _balances[account];
+    }
+    function allowance(address holder, address spender) external view override returns (uint256) {
+        return _allowances[holder][spender];
+    }
+    function checkTxLimit(address sender, uint256 amount) internal view {
+        require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
+        require(launchTimeStamp + vestingDuration[sender] <= block.timestamp ||
+        vestingDuration[sender] == 0, 'vested sender');
+    }
     function getCirculatingSupply() public view returns (uint256) {
         return _totalSupply.sub(balanceOf(DEAD)).sub(balanceOf(ZERO));
     }
-
     function getLiquidityBacking(uint256 accuracy) public view returns (uint256) {
         return accuracy.mul(balanceOf(pair).mul(2)).div(getCirculatingSupply());
     }
-
     function isOverLiquified(uint256 target, uint256 accuracy) public view returns (bool) {
         return getLiquidityBacking(accuracy) > target;
-    }
-
-    function withdrawStuckBNB() external onlyOwner {
-        require(address(this).balance > 0, 'Cannot withdraw negative or zero');
-        payable(owner()).transfer(address(this).balance);
     }
 }
