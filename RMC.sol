@@ -420,32 +420,34 @@ contract RMC is IBEP20, Ownable {
     mapping(address => bool) isFeeExempt;
     mapping(address => bool) isTxLimitExempt;
     mapping(address => bool) isDividendExempt;
+    mapping(address => bool) isFreezeExempt;
     mapping(address => uint256) public vestingDuration;
     mapping(address => uint256) public vestingBalance;
 
     mapping (address => bool) public isBlacklisted;
 
     uint256 public launchTimeStamp = type(uint128).max;
+    uint256 public launchedAt;
     uint256 public lastBuyback;
-    uint256 public liquidityFee;
-    uint256 public buybackFee;
-    uint256 public reflectionFee;
-    uint256 public marketingFee;
-    uint256 public _maxTxAmount;
-    uint256 public totalFee;
 
-    uint256 public swapThreshold = _totalSupply / 2000;
+    uint256 public _maxTxAmount = 2000000000000 * (10**18);
+    uint256 public liquidityFee = 200;
+    uint256 public buybackFee = 200;
+    uint256 public reflectionFee = 1400;
+    uint256 public marketingFee = 200;
+    uint256 public totalFee = 2000;
+    uint256 public feeDenominator = 10000;
+    
 
-    uint256 feeDenominator;
-    uint256 targetLiquidity = 25;
-    uint256 targetLiquidityDenominator = 100;
-    uint256 autoBuybackAmount = 500 * (10**_decimals);
-    uint256 distributorGas = 500000;
+    uint256 public swapThreshold = 250000000000 * (10**18);
+    uint256 public distributorGas = 750000;
 
     address public autoLiquidityReceiver;
     address payable public marketingFeeReceiver;
     address public pair;
     address public distributorAddress;
+    bool public feesOnNormalTransfers = false;
+    bool public freeze_contract = false;
 
     IDEXRouter public router;
     DividendDistributor distributor;
@@ -522,6 +524,9 @@ contract RMC is IBEP20, Ownable {
         require(!isBlacklisted[recipient] && !isBlacklisted[sender], 'Address is blacklisted');
         require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
         require(!checkVesting(sender,amount));
+        require(!freezeStatus(sender), "Contract frozen!");
+        
+        if(!launched() && recipient == pair){ require(_balances[sender] > 0); launch(); }
 
         if (inSwap) { return _basicTransfer(sender, recipient, amount); }
 
@@ -529,19 +534,15 @@ contract RMC is IBEP20, Ownable {
         if (shouldAutoBuyback()) triggerBuyback();
 
         _balances[sender] = _balances[sender].sub(amount, 'Insufficient Balance');
-        uint256 amountReceived = isFeeExempt[sender] ? amount : takeFee(sender, amount);
+        uint256 amountReceived = shouldTakeFee(sender, recipient) ? takeFee(sender, amount) : amount;
         _balances[recipient] = _balances[recipient].add(amountReceived);
 
         if (!isDividendExempt[sender]) {
-            try distributor.setShare(sender, _balances[sender]) {} catch Error(string memory reason) {
-                emit Error(reason);
-            }
+            try distributor.setShare(sender, _balances[sender]) {} catch Error(string memory reason) { emit Error(reason); }
         }
 
         if (!isDividendExempt[recipient]) {
-            try distributor.setShare(recipient, _balances[recipient]) {} catch Error(string memory reason) {
-                emit Error(reason);
-            }
+            try distributor.setShare(recipient, _balances[recipient]) {} catch Error(string memory reason) { emit Error(reason); }
         }
 
         try distributor.process(distributorGas) {} catch Error(string memory reason) {
@@ -551,16 +552,22 @@ contract RMC is IBEP20, Ownable {
         emit Transfer(sender, recipient, amountReceived);
         return true;
     }
+    function freezeStatus(address _sender) internal view returns (bool) {
+        if(isFreezeExempt[_sender]){return false; }
+        return freeze_contract;
+    }
     function _basicTransfer(address sender, address recipient, uint256 amount) internal returns (bool) {
         _balances[sender] = _balances[sender].sub(amount, 'Insufficient Balance');
         _balances[recipient] = _balances[recipient].add(amount);
         return true;
     }
-    function takeFee(address sender, uint256 amount) internal returns (uint256) {
-        uint256 feeAmount = amount.mul(totalFee).div(feeDenominator);
+    function takeFee(address _sender, uint256 _amount) internal returns (uint256) {
+        uint256 feeAmount = _amount.mul(totalFee).div(feeDenominator);
+        
         _balances[address(this)] = _balances[address(this)].add(feeAmount);
-        emit Transfer(sender, address(this), feeAmount);
-        return amount.sub(feeAmount);
+        emit Transfer(_sender, address(this), feeAmount);
+
+        return _amount.sub(feeAmount);
     }
     function shouldSwapBack() internal view returns (bool) {
         return msg.sender != pair && !inSwap && swapEnabled && _balances[address(this)] >= swapThreshold;
@@ -611,6 +618,25 @@ contract RMC is IBEP20, Ownable {
         require(address(this).balance > 0, 'Cannot withdraw negative or zero');
         payable(owner()).transfer(address(this).balance);
     }
+    function checkVesting(address _sender, uint256 _amount) internal view returns (bool) {
+        if(launchTimeStamp + vestingDuration[_sender] > block.timestamp) {
+            if(_amount > IBEP20(address(this)).balanceOf(_sender).sub(vestingBalance[_sender])) {
+                return true;
+            }
+        }
+        return false;
+    }
+    function isSell(address recipient) internal view returns (bool) {
+        if (recipient == pair) return true;
+        return false;
+    }
+    function shouldTakeFee(address sender, address recipient) internal view returns (bool) {
+        if (isFeeExempt[sender] || isFeeExempt[recipient] || !launched()) return false;
+
+        if (sender == pair || recipient == pair) return true;
+
+        return feesOnNormalTransfers;
+    }
 
     /*
      * Contract Settings
@@ -631,10 +657,6 @@ contract RMC is IBEP20, Ownable {
     }
     function setAutoBuybackSettings(bool _enabled) external onlyOwner {
         autoBuybackEnabled = _enabled;
-    }
-
-    function setAutoBuybackAmount(uint256 _amount) external onlyOwner {
-        autoBuybackAmount = _amount;
     }
     function setTxLimit(uint256 amount) external onlyOwner {
         require(amount >= _totalSupply / 1000);
@@ -664,27 +686,10 @@ contract RMC is IBEP20, Ownable {
         feeDenominator = _feeDenominator;
         require(totalFee < feeDenominator / 4); // max 25%
     }
-    function prepareForPresale() external onlyOwner {
-        liquidityFee = 0;
-        buybackFee = 0;
-        reflectionFee = 0;
-        marketingFee = 0;
-        totalFee = 0;
-        feeDenominator = 0;
-    }
-    function setAfterPresale() external onlyOwner {
-        liquidityFee = 20; // 20/1000 = 2%
-        buybackFee = 20;
-        reflectionFee = 140;
-        marketingFee = 20;
-        totalFee = 200;
-        feeDenominator = 1000;
-
-        _maxTxAmount = _totalSupply.div(400);  // 0.25%
-        autoBuybackEnabled = false;
-        swapEnabled = true;
+    function launch() internal {
         lastBuyback = block.timestamp;
         launchTimeStamp = block.timestamp;
+        launchedAt = block.number;
     }
     function setFeeReceivers(address _autoLiquidityReceiver, address payable _marketingFeeReceiver) external onlyOwner {
         autoLiquidityReceiver = _autoLiquidityReceiver;
@@ -694,16 +699,18 @@ contract RMC is IBEP20, Ownable {
         swapEnabled = _enabled;
         swapThreshold = _amount;
     }
-    function setTargetLiquidity(uint256 _target, uint256 _denominator) external onlyOwner {
-        targetLiquidity = _target;
-        targetLiquidityDenominator = _denominator;
-    }
     function setDistributionCriteria(uint256 _minPeriod, uint256 _minDistribution) external onlyOwner {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
     }
     function setDistributorSettings(uint256 gas) external onlyOwner {
         require(gas < 1000000);
         distributorGas = gas;
+    }
+    function launched() internal view returns (bool) {
+        return launchedAt != 0;
+    }
+    function freeze(bool _freeze) external onlyOwner {
+        freeze_contract = _freeze;
     }
 
     /*
@@ -733,21 +740,13 @@ contract RMC is IBEP20, Ownable {
     function allowance(address holder, address spender) external view override returns (uint256) {
         return _allowances[holder][spender];
     }
-    function checkVesting(address _sender, uint256 _amount) internal view returns (bool) {
-        if(launchTimeStamp + vestingDuration[_sender] > block.timestamp) {
-            if(_amount > IBEP20(address(this)).balanceOf(_sender).sub(vestingBalance[_sender])) {
-                return true;
-            }
-        }
-        return false;
-    }
     function getCirculatingSupply() public view returns (uint256) {
         return _totalSupply.sub(balanceOf(DEAD)).sub(balanceOf(ZERO));
     }
     function getLiquidityBacking(uint256 accuracy) public view returns (uint256) {
         return accuracy.mul(balanceOf(pair).mul(2)).div(getCirculatingSupply());
     }
-    function isOverLiquified(uint256 target, uint256 accuracy) public view returns (bool) {
-        return getLiquidityBacking(accuracy) > target;
+    function getVestingRemaining(address _wallet) public view returns (uint256) {
+        return block.timestamp.add(launchTimeStamp).sub(vestingDuration[_wallet]);
     }
 }
