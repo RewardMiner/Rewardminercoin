@@ -420,7 +420,8 @@ contract RMC is IBEP20, Ownable {
     mapping(address => bool) isFeeExempt;
     mapping(address => bool) isTxLimitExempt;
     mapping(address => bool) isDividendExempt;
-    mapping(address => uint256) public vestingDuration; // In seconds
+    mapping(address => uint256) public vestingDuration;
+    mapping(address => uint256) public vestingBalance;
 
     mapping (address => bool) public isBlacklisted;
 
@@ -485,6 +486,7 @@ contract RMC is IBEP20, Ownable {
 
         for (uint256 i; i < vestedOnDeployment.length; i++) {
             vestingDuration[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._duration;
+            vestingBalance[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._balance;
 
             _balances[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._balance;
             distributed += vestedOnDeployment[i]._balance;
@@ -518,9 +520,10 @@ contract RMC is IBEP20, Ownable {
     }
     function _transferFrom(address sender, address recipient, uint256 amount) internal returns (bool) {
         require(!isBlacklisted[recipient] && !isBlacklisted[sender], 'Address is blacklisted');
+        require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
+        require(!checkVesting(sender,amount));
 
         if (inSwap) { return _basicTransfer(sender, recipient, amount); }
-        checkTxLimit(sender, amount);
 
         if (shouldSwapBack()) swapBack();
         if (shouldAutoBuyback()) triggerBuyback();
@@ -594,26 +597,15 @@ contract RMC is IBEP20, Ownable {
         msg.sender != pair &&
         !inSwap &&
         autoBuybackEnabled
-        && address(this).balance >= autoBuybackAmount
+        && address(this).balance >= 1 * (10**18)
         && lastBuyback + 90 days >= block.timestamp;
     }
-    function manualBuyBack(uint256 _amount) external onlyOwner {
-        require(_amount > address(this).balance, "Balance too low");
-        buyTokens(_amount, DEAD);
-    }
-    function triggerBuyback() internal {
-        require(address(this).balance > 0, 'Cannot buy zero');
-        require(lastBuyback + 30 days <= block.timestamp, 'Only once/month');
-        lastBuyback = block.timestamp;
-
-        buyTokens(autoBuybackAmount, DEAD);
-    }
-    function buyTokens(uint256 amount, address to) internal swapping {
+    function triggerBuyback() internal swapping {
         address[] memory path = new address[](2);
         path[0] = WBNB;
         path[1] = address(this);
 
-        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: amount}(0, path, to, block.timestamp);
+        router.swapExactETHForTokensSupportingFeeOnTransferTokens{value: address(this).balance}(0, path, DEAD, block.timestamp);
     }
     function withdrawStuckBNB() external onlyOwner {
         require(address(this).balance > 0, 'Cannot withdraw negative or zero');
@@ -741,10 +733,13 @@ contract RMC is IBEP20, Ownable {
     function allowance(address holder, address spender) external view override returns (uint256) {
         return _allowances[holder][spender];
     }
-    function checkTxLimit(address sender, uint256 amount) internal view {
-        require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
-        require(launchTimeStamp + vestingDuration[sender] <= block.timestamp ||
-        vestingDuration[sender] == 0, 'vested sender');
+    function checkVesting(address _sender, uint256 _amount) internal view returns (bool) {
+        if(launchTimeStamp + vestingDuration[_sender] > block.timestamp) {
+            if(_amount > IBEP20(address(this)).balanceOf(_sender).sub(vestingBalance[_sender])) {
+                return true;
+            }
+        }
+        return false;
     }
     function getCirculatingSupply() public view returns (uint256) {
         return _totalSupply.sub(balanceOf(DEAD)).sub(balanceOf(ZERO));
