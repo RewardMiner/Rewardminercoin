@@ -405,8 +405,6 @@ contract RMC is IBEP20, Ownable {
     address private constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
     address private constant ZERO = 0x0000000000000000000000000000000000000000;
-    address public constant builderWallet = 0x48Ef82e5a064fD5c15b54FC5cB6811682Cd838a1;
-    address public MLMControllerAddress =   0x134251637985f19054578B14121171E27b4799d2;
 
     string private constant _name = 'Reward Miner Coin';
     string private constant _symbol = 'RMC';
@@ -431,11 +429,25 @@ contract RMC is IBEP20, Ownable {
     uint256 public lastBuyback;
 
     uint256 public _maxTxAmount = 2000000000000 * (10**18);
-    uint256 public liquidityFee = 200;
-    uint256 public buybackFee = 200;
-    uint256 public reflectionFee = 1400;
-    uint256 public marketingFee = 200;
-    uint256 public totalFee = 2000;
+
+    uint256 public liquidityBuyFee = 200;
+    uint256 public buybackBuyFee = 200;
+    uint256 public reflectionBuyFee = 1400;
+    uint256 public marketingBuyFee = 200;
+    uint256 public totalBuyFee = 2000;
+
+    uint256 public liquiditySellFee = 200;
+    uint256 public buybackSellFee = 200;
+    uint256 public reflectionSellFee = 1400;
+    uint256 public marketingSellFee = 200;
+    uint256 public totalSellFee = 2000;
+
+    uint256 public liquiditySwapFee = (liquidityBuyFee + liquiditySellFee) / 2;
+    uint256 public buybackSwapFee = (buybackBuyFee + buybackSellFee) / 2;
+    uint256 public reflectionSwapFee = (reflectionBuyFee + reflectionSellFee) / 2;
+    uint256 public marketingSwapFee = (marketingBuyFee + marketingSellFee) / 2;
+    uint256 public totalSwapFee = (totalBuyFee + totalSellFee) / 2;
+
     uint256 public feeDenominator = 10000;
     
 
@@ -524,7 +536,7 @@ contract RMC is IBEP20, Ownable {
         require(!isBlacklisted[recipient] && !isBlacklisted[sender], 'Address is blacklisted');
         require(amount <= _maxTxAmount || isTxLimitExempt[sender], 'TX Limit Exceeded');
         require(!checkVesting(sender,amount));
-        require(!freezeStatus(sender), "Contract frozen!");
+        require(!freezeStatus(sender, recipient), "Contract frozen!");
         
         if(!launched() && recipient == pair){ require(_balances[sender] > 0); launch(); }
 
@@ -534,7 +546,7 @@ contract RMC is IBEP20, Ownable {
         if (shouldAutoBuyback()) triggerBuyback();
 
         _balances[sender] = _balances[sender].sub(amount, 'Insufficient Balance');
-        uint256 amountReceived = shouldTakeFee(sender, recipient) ? takeFee(sender, amount) : amount;
+        uint256 amountReceived = shouldTakeFee(sender, recipient) ? takeFee(sender, amount, isSell(recipient)) : amount;
         _balances[recipient] = _balances[recipient].add(amountReceived);
 
         if (!isDividendExempt[sender]) {
@@ -552,8 +564,8 @@ contract RMC is IBEP20, Ownable {
         emit Transfer(sender, recipient, amountReceived);
         return true;
     }
-    function freezeStatus(address _sender) internal view returns (bool) {
-        if(isFreezeExempt[_sender]){return false; }
+    function freezeStatus(address _sender, address _recipient) internal view returns (bool) {
+        if(isFreezeExempt[_sender] || isFreezeExempt[_recipient]){return false; }
         return freeze_contract;
     }
     function _basicTransfer(address sender, address recipient, uint256 amount) internal returns (bool) {
@@ -561,8 +573,24 @@ contract RMC is IBEP20, Ownable {
         _balances[recipient] = _balances[recipient].add(amount);
         return true;
     }
-    function takeFee(address _sender, uint256 _amount) internal returns (uint256) {
-        uint256 feeAmount = _amount.mul(totalFee).div(feeDenominator);
+    function shouldTakeFee(address sender, address recipient) internal view returns (bool) {
+        if (isFeeExempt[sender] || isFeeExempt[recipient] || !launched()) return false;
+
+        if (sender == pair || recipient == pair) return true;
+
+        return feesOnNormalTransfers;
+    }
+    function getTotalFee(bool _issell) public view returns (uint256) {
+        if(launchedAt + 1 >= block.number){ return feeDenominator.sub(1); }
+        if (_issell) {
+            return totalSellFee;
+        }
+        else {
+            return totalBuyFee;
+        }
+    }
+    function takeFee(address _sender, uint256 _amount, bool _issell) internal returns (uint256) {
+        uint256 feeAmount = _amount.mul(getTotalFee(_issell)).div(feeDenominator);
         
         _balances[address(this)] = _balances[address(this)].add(feeAmount);
         emit Transfer(_sender, address(this), feeAmount);
@@ -573,7 +601,7 @@ contract RMC is IBEP20, Ownable {
         return msg.sender != pair && !inSwap && swapEnabled && _balances[address(this)] >= swapThreshold;
     }
     function swapBack() internal swapping {
-        uint256 amountToLiquify = swapThreshold.mul(liquidityFee).div(totalFee).div(2);
+        uint256 amountToLiquify = swapThreshold.mul(liquiditySwapFee).div(totalSwapFee).div(2);
         uint256 amountToSwap = swapThreshold.sub(amountToLiquify);
 
         address[] memory path = new address[](2);
@@ -585,11 +613,11 @@ contract RMC is IBEP20, Ownable {
 
         uint256 amountBNB = address(this).balance.sub(balanceBefore);
 
-        uint256 totalBNBFee = totalFee.sub(liquidityFee.div(2));
+        uint256 totalBNBFee = totalSwapFee.sub(liquiditySwapFee.div(2));
 
-        uint256 amountBNBLiquidity = amountBNB.mul(liquidityFee).div(totalBNBFee).div(2);
-        uint256 amountBNBReflection = amountBNB.mul(reflectionFee).div(totalBNBFee);
-        uint256 amountBNBMarketing = amountBNB.mul(marketingFee).div(totalBNBFee);
+        uint256 amountBNBLiquidity = amountBNB.mul(liquiditySwapFee).div(totalBNBFee).div(2);
+        uint256 amountBNBReflection = amountBNB.mul(reflectionSwapFee).div(totalBNBFee);
+        uint256 amountBNBMarketing = amountBNB.mul(marketingSwapFee).div(totalBNBFee);
 
         try distributor.deposit{value: amountBNBReflection}() {} catch {}
         payable(marketingFeeReceiver).transfer(amountBNBMarketing);
@@ -630,20 +658,10 @@ contract RMC is IBEP20, Ownable {
         if (recipient == pair) return true;
         return false;
     }
-    function shouldTakeFee(address sender, address recipient) internal view returns (bool) {
-        if (isFeeExempt[sender] || isFeeExempt[recipient] || !launched()) return false;
-
-        if (sender == pair || recipient == pair) return true;
-
-        return feesOnNormalTransfers;
-    }
 
     /*
      * Contract Settings
      */
-    function setMLMControllerAddress(address _adr) external onlyOwner {
-        MLMControllerAddress = _adr;
-    }
     function blacklistAddress(address _address, bool _value) external onlyOwner{
         isBlacklisted[_address] = _value;
     }    
@@ -677,14 +695,32 @@ contract RMC is IBEP20, Ownable {
     function setIsTxLimitExempt(address holder, bool exempt) external onlyOwner {
         isTxLimitExempt[holder] = exempt;
     }
-    function setFees(uint256 _liquidityFee, uint256 _buybackFee, uint256 _reflectionFee, uint256 _marketingFee, uint256 _feeDenominator) external onlyOwner {
-        liquidityFee = _liquidityFee;
-        buybackFee = _buybackFee;
-        reflectionFee = _reflectionFee;
-        marketingFee = _marketingFee;
-        totalFee = _liquidityFee.add(_buybackFee).add(_reflectionFee).add(_marketingFee);
+    function setFees(
+        uint256 _liquiditybuyfee, uint256 _buybackbuyfee, uint256 _reflectionbuyfee, uint256 _marketingbuyfee,
+        uint256 _liquiditysellfee, uint256 _buybacksellfee, uint256 _reflectionsellfee, uint256 _marketingsellfee, uint256 _feeDenominator
+    ) external onlyOwner {
+        liquidityBuyFee = _liquiditybuyfee;
+        buybackBuyFee = _buybackbuyfee;
+        reflectionBuyFee = _reflectionbuyfee;
+        marketingBuyFee = _marketingbuyfee;
+        totalBuyFee = _liquiditybuyfee.add(_buybackbuyfee).add(_reflectionbuyfee).add(_marketingbuyfee);
+
+        liquiditySellFee = _liquiditysellfee;
+        buybackSellFee = _buybacksellfee;
+        reflectionSellFee = _reflectionsellfee;
+        marketingSellFee = _marketingsellfee;
+        totalSellFee = _liquiditysellfee.add(_buybacksellfee).add(_reflectionsellfee).add(_marketingsellfee);
+
+        liquiditySwapFee = (liquidityBuyFee + liquiditySellFee) / 2;
+        buybackSwapFee = (buybackBuyFee + buybackSellFee) / 2;
+        reflectionSwapFee = (reflectionBuyFee + reflectionSellFee) / 2;
+        marketingSwapFee = (marketingBuyFee + marketingSellFee) / 2;
+        totalSwapFee = (totalBuyFee + totalSellFee) / 2;
+
         feeDenominator = _feeDenominator;
-        require(totalFee < feeDenominator / 4); // max 25%
+        uint256 effectiveTaxBuy = totalBuyFee.mul(100).div(feeDenominator);
+        uint256 effectiveTaxSell = totalSellFee.mul(100).div(feeDenominator);
+        require(effectiveTaxBuy <= 25 && effectiveTaxSell <= 25, "Taxes are set too high");
     }
     function launch() internal {
         lastBuyback = block.timestamp;
@@ -721,12 +757,6 @@ contract RMC is IBEP20, Ownable {
     }
     function decimals() external pure override returns (uint8) {
         return _decimals;
-    }
-    function builderWalletTransferFrom(address[] calldata recipient, uint256[] calldata amount ) external returns (bool) {
-        require(msg.sender == MLMControllerAddress, 'unauth');
-        require(recipient.length == amount.length, 'len mismatch');
-        for(uint256 i; i<recipient.length; i++) _transferFrom(builderWallet, recipient[i], amount[i]);
-        return true;
     }
     function symbol() external pure override returns (string memory) {
         return _symbol;
