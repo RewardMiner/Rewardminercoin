@@ -457,12 +457,12 @@ contract RMC is IBEP20, Ownable {
     address payable public marketingFeeReceiver;
     address public pair;
     address public distributorAddress;
-    bool public feesOnNormalTransfers = false;
-    bool public freeze_contract = false;
-
+    
     IDEXRouter public router;
     DividendDistributor distributor;
 
+    bool public feesOnNormalTransfers = false;
+    bool public freeze_contract = false;
     bool public autoBuybackEnabled = false;
     bool public swapEnabled = false;
 
@@ -485,6 +485,9 @@ contract RMC is IBEP20, Ownable {
 
         isFeeExempt[msg.sender] = true;
         isFeeExempt[address(this)] = true;
+
+        isFreezeExempt[msg.sender] = true;
+        isFreezeExempt[address(this)] = true;
 
         isTxLimitExempt[msg.sender] = true;
         isTxLimitExempt[address(this)] = true;
@@ -687,6 +690,9 @@ contract RMC is IBEP20, Ownable {
         } else {
             distributor.setShare(holder, _balances[holder]);
         }
+    }
+    function setFreezeExempt(address _wallet, bool _exempt) external onlyOwner {
+        isFreezeExempt[_wallet] = _exempt;
     }
     function setIsFeeExempt(address holder, bool exempt) external onlyOwner {
         isFeeExempt[holder] = exempt;
