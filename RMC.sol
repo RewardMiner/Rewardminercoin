@@ -406,8 +406,8 @@ contract RMC is IBEP20, Ownable {
     address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
     address private constant ZERO = 0x0000000000000000000000000000000000000000;
 
-    string private constant _name = 'Reward Miner Coin';
-    string private constant _symbol = 'RMC';
+    string private constant _name = 'ReMiCo';
+    string private constant _symbol = 'ReM';
 
     uint8 private constant _decimals = 18;
 
@@ -449,7 +449,6 @@ contract RMC is IBEP20, Ownable {
     uint256 public totalSwapFee = (totalBuyFee + totalSellFee) / 2;
 
     uint256 public feeDenominator = 10000;
-    
 
     uint256 public swapThreshold = 250000000000 * (10**18);
     uint256 public distributorGas = 750000;
@@ -778,5 +777,8 @@ contract RMC is IBEP20, Ownable {
     }
     function getVestingRemaining(address _wallet) public view returns (uint256) {
         return block.timestamp.add(launchTimeStamp).sub(vestingDuration[_wallet]);
+    }
+    function getVestingAmount(address _wallet) public view returns (uint256) {
+        return vestingBalance[_wallet];
     }
 }
