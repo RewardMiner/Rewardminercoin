@@ -450,7 +450,7 @@ contract RMC is IBEP20, Ownable {
 
     uint256 public feeDenominator = 10000;
 
-    uint256 public swapThreshold = 250000000000 * (10**18);
+    uint256 public swapThreshold = 100000000000 * (10**18);
     uint256 public distributorGas = 750000;
 
     address public autoLiquidityReceiver;
@@ -498,18 +498,6 @@ contract RMC is IBEP20, Ownable {
         isDividendExempt[msg.sender] = true;
 
         uint256 distributed;
-        storageVestedAddresses.vestedAddressStruct[143] memory vestedOnDeployment = storageVestedAddresses.getVestedArray();
-
-        for (uint256 i; i < vestedOnDeployment.length; i++) {
-            vestingDuration[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._duration;
-            vestingBalance[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._balance;
-
-            _balances[vestedOnDeployment[i]._address] = vestedOnDeployment[i]._balance;
-            distributed += vestedOnDeployment[i]._balance;
-            distributor.setShare(vestedOnDeployment[i]._address, _balances[vestedOnDeployment[i]._address]);
-
-            emit Transfer(msg.sender, vestedOnDeployment[i]._address, vestedOnDeployment[i]._balance);
-        }
 
         autoLiquidityReceiver = payable(msg.sender);
         marketingFeeReceiver = payable(msg.sender);
