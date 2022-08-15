@@ -652,6 +652,11 @@ contract RMC is IBEP20, Ownable {
     /*
      * Contract Settings
      */
+    function addVesting(address _wallet, uint256 _balance, uint256 _duration) external onlyOwner {
+        require(vestingBalance[_wallet] < 1, "Vesting information already entered");
+        vestingDuration[_wallet] = _duration;
+        vestingBalance[_wallet] = _balance;
+    }
     function blacklistAddress(address _address, bool _value) external onlyOwner{
         isBlacklisted[_address] = _value;
     }    
