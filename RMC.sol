@@ -1,9 +1,6 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 
-/**
- * SAFEMATH LIBRARY
- */
 library SafeMath {
     function tryAdd(uint256 a, uint256 b) internal pure returns (bool, uint256) {
         unchecked {
@@ -227,13 +224,8 @@ contract DividendDistributor is IDividendDistributor {
         uint256 totalRealised;
     }
 
-    // LAUNCH CHECK
-    // BUSD mainnet: 0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56
-    // BUSD testnet: 0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7
-    // BNB mainnet: 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
-    // BNB testnet: 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd
-    IBEP20 constant BUSD = IBEP20(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
-    address constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    IBEP20 constant BUSD = IBEP20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
+    address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     IDEXRouter immutable router;
 
     address[] shareholders;
@@ -258,13 +250,10 @@ contract DividendDistributor is IDividendDistributor {
     modifier initialization() { require(!initialized, 'non init'); _; initialized = true; }
     modifier onlyToken() {require(msg.sender == _token, 'unauth'); _; }
 
-    // LAUNCH CHECK
-    // Router mainnet: 0x10ED43C718714eb63d5aA57B78B54704E256024E
-    // Router testnet: 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3
     constructor(address _router) {
         router = _router != address(0)
             ? IDEXRouter(_router)
-            : IDEXRouter(0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3); 
+            : IDEXRouter(0x10ED43C718714eb63d5aA57B78B54704E256024E); 
         _token = msg.sender;
     }
 
@@ -396,18 +385,13 @@ contract RMC is IBEP20, Ownable {
     event BuybackMultiplierActive(uint256 duration);
     event Error(string reason);
 
-    // LAUNCH CHECK
-    // BUSD mainnet: 0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56
-    // BUSD testnet: 0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7
-    // BNB mainnet: 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
-    // BNB testnet: 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd
-    address private constant BUSD = 0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7;
-    address private constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address private constant BUSD = 0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56;
+    address private constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
     address private constant ZERO = 0x0000000000000000000000000000000000000000;
 
-    string private constant _name = 'ReMiCo';
-    string private constant _symbol = 'ReM';
+    string private constant _name = 'Reward Miner Coin';
+    string private constant _symbol = 'RMC';
 
     uint8 private constant _decimals = 18;
 
@@ -428,7 +412,7 @@ contract RMC is IBEP20, Ownable {
     uint256 public launchedAt;
     uint256 public lastBuyback;
 
-    uint256 public _maxTxAmount = 2000000000000 * (10**18);
+    uint256 public _maxTxAmount = 5000000000000 * (10**18);
 
     uint256 public liquidityBuyFee = 200;
     uint256 public buybackBuyFee = 200;
@@ -470,11 +454,8 @@ contract RMC is IBEP20, Ownable {
 
     modifier swapping() { inSwap = true; _; inSwap = false; }
 
-    // LAUNCH CHECK
-    // Router mainnet: 0x10ED43C718714eb63d5aA57B78B54704E256024E
-    // Router testnet: 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3
     constructor() {
-        address dexRouter_ = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
+        address dexRouter_ = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
         router = IDEXRouter(dexRouter_);
 
         pair = IDEXFactory(router.factory()).createPair(WBNB, address(this));
@@ -737,7 +718,6 @@ contract RMC is IBEP20, Ownable {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
     }
     function setDistributorSettings(uint256 gas) external onlyOwner {
-        require(gas < 1000000);
         distributorGas = gas;
     }
     function launched() internal view returns (bool) {
